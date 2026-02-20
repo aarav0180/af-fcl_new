@@ -7,13 +7,25 @@ import json
 
 from FLAlgorithms.servers.serverPreciseFCL import FedPrecise
 from utils.utils import setup_seed, set_log_file, print_args
+from improved import any_improvement_enabled
 
 def create_server_n_user(args, i):
     
-    # create base model, irreverent to FedXXX
-    model = create_model(args)
-    
-    server=FedPrecise(args, model, i)
+    if any_improvement_enabled(args):
+        # Use improved model + server when any feature flag is active
+        from improved.improved_model import ImprovedPreciseModel
+        from improved.improved_server import ImprovedFedPrecise
+        model = ImprovedPreciseModel(args)
+        server = ImprovedFedPrecise(args, model, i)
+        enabled = [f for f in ['density_ratio', 'personalized_nf', 'ema_extractor',
+                                'fisher_aggregation', 'adaptive_theta', 'sinkhorn_kd']
+                   if getattr(args, f'use_{f}', False)]
+        logger.info(f'[IMPROVED] Active features: {enabled}')
+    else:
+        # Original code path — no changes
+        model = create_model(args)
+        server = FedPrecise(args, model, i)
+        logger.info('[ORIGINAL] Running original AF-FCL (no improvements enabled)')
     return server
 
 
@@ -79,7 +91,56 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true", help="debug or not")
     parser.add_argument("--ssh", action="store_true", help="whether is run by search")
 
+    # ============================================================
+    # Research Improvement Feature Flags (each is independently togglable)
+    # ============================================================
+    parser.add_argument('--use_all_improvements', action='store_true',
+                        help='Enable ALL 6 research improvements at once')
+
+    # Feature 1: Density ratio credibility (replaces Eq. 8 absolute density)
+    parser.add_argument('--use_density_ratio', action='store_true',
+                        help='F1: Use density ratio p_local/p_prior instead of absolute density')
+
+    # Feature 2: Personalized NF with KL regularization to server
+    parser.add_argument('--use_personalized_nf', action='store_true',
+                        help='F2: Personalized NF per client with KL(g_k || g_server)')
+    parser.add_argument('--nf_kl_lambda', type=float, default=0.1,
+                        help='F2: Weight for KL divergence term in NF training')
+
+    # Feature 3: EMA feature extractor for stable NF training
+    parser.add_argument('--use_ema_extractor', action='store_true',
+                        help='F3: Use EMA of h_a as stable NF training target')
+    parser.add_argument('--ema_alpha', type=float, default=0.999,
+                        help='F3: EMA decay rate (higher=more stable)')
+
+    # Feature 4: Fisher-weighted aggregation for NF parameters
+    parser.add_argument('--use_fisher_aggregation', action='store_true',
+                        help='F4: Fisher Information weighted FedAvg for NF params')
+
+    # Feature 5: Task-similarity adaptive explore-theta
+    parser.add_argument('--use_adaptive_theta', action='store_true',
+                        help='F5: Data-driven theta via cross-task NF log-likelihood')
+    parser.add_argument('--adaptive_theta_beta', type=float, default=1.0,
+                        help='F5: Sigmoid scaling for adaptive theta sensitivity')
+
+    # Feature 6: Sinkhorn divergence for feature distillation (replaces Eq. 6)
+    parser.add_argument('--use_sinkhorn_kd', action='store_true',
+                        help='F6: Sinkhorn divergence replaces MSE in feature KD')
+    parser.add_argument('--sinkhorn_reg', type=float, default=0.1,
+                        help='F6: Entropic regularization epsilon for Sinkhorn')
+    parser.add_argument('--sinkhorn_iters', type=int, default=30,
+                        help='F6: Number of Sinkhorn iterations')
+
     args = parser.parse_args()
+
+    # Convenience: --use_all_improvements enables all 6 features
+    if args.use_all_improvements:
+        args.use_density_ratio = True
+        args.use_personalized_nf = True
+        args.use_ema_extractor = True
+        args.use_fisher_aggregation = True
+        args.use_adaptive_theta = True
+        args.use_sinkhorn_kd = True
 
     os.makedirs(args.target_dir_name, exist_ok=True)
     setup_seed(args.seed)

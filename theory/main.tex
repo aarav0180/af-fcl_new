@@ -1,0 +1,712 @@
+\documentclass[11pt, a4paper]{article}
+
+% ---- Packages ----
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{mathtools}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{tcolorbox}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+
+\geometry{margin=1in}
+\hypersetup{colorlinks=true, linkcolor=blue!70!black, citecolor=green!50!black, urlcolor=blue!60!black}
+
+% ---- Custom Environments ----
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
+\newtheorem{problem}{Problem}[section]
+\newtheorem{proposition}{Proposition}[section]
+
+\newtcolorbox{oldmethod}{colback=red!5!white, colframe=red!60!black, title=Original AF-FCL Method, fonttitle=\bfseries}
+\newtcolorbox{newmethod}{colback=green!5!white, colframe=green!50!black, title=Proposed Improvement, fonttitle=\bfseries}
+\newtcolorbox{intuition}{colback=blue!5!white, colframe=blue!40!black, title=Intuition, fonttitle=\bfseries}
+\newtcolorbox{keypoint}{colback=yellow!8!white, colframe=orange!60!black, title=Key Point, fonttitle=\bfseries}
+
+% ---- Commands ----
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\E}{\mathbb{E}}
+\newcommand{\N}{\mathcal{N}}
+\newcommand{\loss}{\mathcal{L}}
+\newcommand{\data}{\mathcal{D}}
+\newcommand{\ha}{h_a}
+\newcommand{\haold}{h_a'}
+\newcommand{\xvec}{\mathbf{x}}
+\newcommand{\zvec}{\mathbf{z}}
+\newcommand{\uvec}{\mathbf{u}}
+\newcommand{\muvec}{\boldsymbol{\mu}}
+\newcommand{\Sigmavec}{\boldsymbol{\Sigma}}
+\newcommand{\thetavec}{\boldsymbol{\theta}}
+
+\pagestyle{fancy}
+\fancyhhead{}
+\lhead{AF-FCL: Mathematical Theory of Improvements}
+\rhead{\thepage}
+
+\title{\textbf{Mathematical Foundations of AF-FCL Improvements}\\[0.5em]
+\large A Detailed Derivation of Six Research Contributions\\
+for Accurate Forgetting in Federated Continual Learning}
+\author{Theory Reference Document}
+\date{}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ======================================================================
+% SECTION 1: BACKGROUND
+% ======================================================================
+\section{Background: How AF-FCL Works}
+\label{sec:background}
+
+This section explains the mathematics of the original AF-FCL paper from the ground up. Every equation in the original paper is derived here before we explain what is wrong and how we fix it.
+
+\subsection{The Setup: Federated Continual Learning}
+
+We have $K$ clients, each receiving a sequence of tasks $t = 1, 2, \ldots, T$. At task $t$, client $k$ has local data $\data_k^t = \{(\xvec_i, y_i)\}_{i=1}^{n_k^t}$. After training on task $t$, the data $\data_k^t$ is \textbf{discarded} (the continual learning constraint). All clients share a single server that aggregates model parameters.
+
+The two core challenges are:
+\begin{enumerate}[leftmargin=2em]
+    \item \textbf{Catastrophic forgetting}: Training on task $t$ overwrites knowledge from tasks $1, \ldots, t{-}1$.
+    \item \textbf{Heterogeneity}: Different clients see different subsets of classes per task, so blindly averaging models causes interference.
+\end{enumerate}
+
+\subsection{Architecture}
+
+The model has two components:
+\begin{enumerate}[leftmargin=2em]
+    \item \textbf{Classifier} $f = f_c \circ \ha$: a feature extractor $\ha: \R^{d_{in}} \to \R^D$ (CNN or ResNet backbone) followed by a classification head $f_c: \R^D \to \R^C$ (fully connected layer + softmax). Here $D = 512$ is the feature dimension and $C$ is the total number of classes.
+
+    \item \textbf{Conditional Normalizing Flow} $g$: a generative model that learns the distribution of features $\ha(\xvec)$ conditioned on class label $y$. It maps between feature space $\R^D$ and a latent space $\R^D$ where the base distribution is a standard Gaussian.
+\end{enumerate}
+
+\subsection{Normalizing Flows: The Generative Engine}
+\label{sec:nf_background}
+
+A normalizing flow defines a bijective mapping $g: \R^D \to \R^D$ (conditioned on $y$) between a simple base distribution and a complex target distribution.
+
+\begin{definition}[Normalizing Flow]
+Given a base distribution $p_{\uvec}(\uvec) = \N(\mathbf{0}, \mathbf{I}_D)$ and an invertible transform $g(\cdot \mid y)$, the density of a point $\zvec$ in feature space is:
+\begin{equation}
+    \boxed{p_{\zvec}(\zvec \mid y) = p_{\uvec}\!\left(g(\zvec, y)\right) \cdot \left|\det \frac{\partial g(\zvec, y)}{\partial \zvec}\right|}
+    \tag{Eq.~3 in paper}
+    \label{eq:nf_density}
+\end{equation}
+where $g(\zvec, y)$ maps $\zvec$ to the latent space, and the Jacobian determinant accounts for the volume change.
+\end{definition}
+
+\begin{intuition}
+Think of $g$ as a ``compression'' function. It takes a complicated distribution of features (the output of your CNN) and ``decompresses'' it into a simple Gaussian. The Jacobian determinant is the ``price'' you pay for this decompression --- it tells you how much volume was stretched or squeezed.
+\end{intuition}
+
+Taking the logarithm of Eq.~\eqref{eq:nf_density}:
+\begin{equation}
+    \log p_{\zvec}(\zvec \mid y) = \underbrace{\log p_{\uvec}(g(\zvec, y))}_{\text{how Gaussian-like is the latent code}} + \underbrace{\log \left|\det \frac{\partial g}{\partial \zvec}\right|}_{\text{volume correction}}
+    \label{eq:nf_logprob}
+\end{equation}
+
+Since $p_{\uvec} = \N(\mathbf{0}, \mathbf{I})$, the first term becomes $-\frac{D}{2}\log(2\pi) - \frac{1}{2}\|g(\zvec, y)\|^2$.
+
+\textbf{Sampling}: To generate a fake feature vector, sample $\uvec \sim \N(\mathbf{0}, \mathbf{I})$ and compute $\zvec = g^{-1}(\uvec, y)$ using the inverse transform.
+
+\subsection{Training the NF (Eq. 5)}
+\label{sec:nf_training}
+
+The NF is trained to maximize the log-likelihood of real features:
+
+\begin{oldmethod}
+\textbf{NF Training Objective (Eq. 5):}
+\begin{equation}
+    \loss_{\text{NF}} = \underbrace{-\frac{1}{|\data_k^t|}\sum_{(\xvec_i, y_i) \in \data_k^t} \log p_{\zvec}\!\left(\ha(\xvec_i), y_i\right)}_{\text{fit NF to current task's features}}
+    \;-\; \underbrace{\frac{\lambda_{\text{last}}}{|G_z|}\sum_{(\zvec_j, y_j) \in G_z} \log p_{\zvec}\!\left(\zvec_j, y_j\right)}_{\text{replay: fit NF to old generated features}}
+    \tag{Eq.~5}
+    \label{eq:nf_loss}
+\end{equation}
+where $G_z = \{\zvec_j = g'^{-1}(\uvec_j, y_j) : \uvec_j \sim \N(\mathbf{0}, \mathbf{I})\}$ are features generated by the previous task's NF $g'$.
+\end{oldmethod}
+
+\subsection{Credibility Estimation (Eq. 7--8): Accurate Forgetting}
+\label{sec:credibility}
+
+This is the paper's core contribution. Not all generated features are useful --- some may come from classes that conflict with the current task. The paper assigns a ``credibility'' weight to each generated feature.
+
+\textbf{Step 1: Map real features to latent space.} For each real data point $(\xvec_i, y_i)$, compute the latent code:
+\begin{equation}
+    \bar{\uvec}_i = g\!\left(\ha(\xvec_i), y_i\right)
+    \label{eq:latent_code}
+\end{equation}
+
+\textbf{Step 2: Fit a diagonal Gaussian per class} in the latent space:
+\begin{equation}
+    \boxed{\muvec_c = \frac{1}{n_c}\sum_{y_i = c} \bar{\uvec}_i, \qquad \Sigmavec_c = \text{diag}\!\left(\frac{1}{n_c}\sum_{y_i = c} (\bar{\uvec}_i - \muvec_c)^2\right)}
+    \tag{Eq.~7}
+    \label{eq:gaussian_fit}
+\end{equation}
+where $n_c = |\{i : y_i = c\}|$ is the number of samples of class $c$ in the local data.
+
+\textbf{Step 3: Score generated features.} For a generated feature with latent code $\bar{\uvec}$ and class $c$:
+\begin{equation}
+    \boxed{p_{\data_k^t}(\bar{\uvec}) = \N\!\left(\bar{\uvec}; \muvec_c, \Sigmavec_c\right) = \prod_{d=1}^{D} \frac{1}{\sqrt{2\pi\sigma_{c,d}^2}} \exp\!\left(-\frac{(\bar{u}_d - \mu_{c,d})^2}{2\sigma_{c,d}^2}\right)}
+    \tag{Eq.~8}
+    \label{eq:credibility}
+\end{equation}
+
+The paper then averages over dimensions (taking the mean of per-dimension probabilities) to get a scalar weight per sample.
+
+\begin{intuition}
+If a generated feature's latent code is close to where the local data ``lives'' in latent space, it gets a high credibility weight. If it is far away (from a class the client has not seen), it gets a low weight. This is how the model ``accurately forgets'' irrelevant generated features.
+\end{intuition}
+
+\subsection{Knowledge Distillation (Eq. 6)}
+\label{sec:kd}
+
+To prevent the feature extractor $\ha$ from drifting too far when learning a new task, the paper adds a distillation loss:
+
+\begin{oldmethod}
+\textbf{Feature Distillation (Eq. 6):}
+\begin{equation}
+    \boxed{\loss_{\text{KD}} = \frac{1}{n}\sum_{i=1}^{n} \left\|\ha(\xvec_i) - \haold(\xvec_i)\right\|^2}
+    \tag{Eq.~6}
+    \label{eq:kd}
+\end{equation}
+where $\haold$ is the feature extractor from the previous task (frozen copy).
+\end{oldmethod}
+
+This is a pointwise MSE loss --- each sample's current features must stay close to its old features.
+
+\subsection{Explore--Forget Weight}
+\label{sec:explore_forget}
+
+The weight for the generated-feature classification loss is:
+\begin{equation}
+    k_{\text{explore}} = (1 - \theta) \cdot \bar{p} + \theta
+    \label{eq:explore_weight}
+\end{equation}
+where $\bar{p} = \text{mean}(p_{\data_k^t}(\bar{\uvec}_i))$ is the average credibility and $\theta \in [0, 1]$ is a \textbf{fixed} hyperparameter (hand-tuned per dataset).
+
+\subsection{Final Objective (Eq. 9)}
+\label{sec:final_objective}
+
+\begin{equation}
+    \boxed{\loss_{\text{total}} = \underbrace{\loss_{\text{CE}}^x}_{\text{real data}} + k_{\text{flow}} \cdot \left(\underbrace{k_{\text{explore}} \cdot \loss_{\text{CE}}^g}_{\text{generated data}} + \underbrace{\loss_{\text{KD}}^g}_{\text{output distillation on generated}}\right) + \underbrace{\loss_{\text{KD}}}_{\text{feature + output distillation on real}}}
+    \tag{Eq.~9}
+    \label{eq:final_loss}
+\end{equation}
+
+\subsection{Server Aggregation: FedAvg}
+\label{sec:fedavg}
+
+After local training, the server aggregates all parameters (both classifier and NF) using Federated Averaging:
+\begin{equation}
+    \thetavec_{\text{server}} = \sum_{k=1}^{K} \frac{n_k}{\sum_{j} n_j} \thetavec_k
+    \label{eq:fedavg}
+\end{equation}
+where $n_k$ is the number of training samples for client $k$.
+
+\newpage
+% ======================================================================
+% SECTION 2: FEATURE 1 --- DENSITY RATIO CREDIBILITY
+% ======================================================================
+\section{Feature 1: Density Ratio Credibility}
+\label{sec:f1}
+
+\subsection{The Problem with Absolute Density}
+
+Recall from Eq.~\eqref{eq:credibility} that the original credibility weight is:
+\begin{equation}
+    w_i^{\text{old}} = p_{\data_k^t}(\bar{\uvec}_i) = \N(\bar{\uvec}_i; \muvec_c, \Sigmavec_c)
+\end{equation}
+
+\begin{problem}[Bias from the base distribution]
+The generated latent codes $\bar{\uvec}_i$ are sampled from the base distribution $p_{\uvec} = \N(\mathbf{0}, \mathbf{I})$. Therefore, most samples cluster near the origin. If the local Gaussian $\N(\muvec_c, \Sigmavec_c)$ also has $\muvec_c \approx \mathbf{0}$ (which it often does because the NF is trained to map to a standard Gaussian), then:
+\begin{equation}
+    p_{\data_k^t}(\bar{\uvec}_i) \text{ is high for almost all samples}
+\end{equation}
+This makes the credibility weight nearly uniform --- it fails to distinguish informative from uninformative generated features.
+\end{problem}
+
+The core issue is that absolute density conflates two things:
+\begin{enumerate}
+    \item How likely the sample is under the \textbf{local data distribution} (what we want).
+    \item How likely the sample is under the \textbf{base distribution} (trivially high by construction).
+\end{enumerate}
+
+\subsection{The Fix: Density Ratio}
+
+\begin{newmethod}
+\textbf{Replace absolute density with a density ratio:}
+\begin{equation}
+    \boxed{w_i = \frac{p_{\data_k^t}(\bar{\uvec}_i)}{p_{\text{prior}}(\bar{\uvec}_i)} = \frac{\N(\bar{\uvec}_i; \muvec_c, \Sigmavec_c)}{\N(\bar{\uvec}_i; \mathbf{0}, \mathbf{I})}}
+    \label{eq:density_ratio}
+\end{equation}
+This measures how much \textbf{more likely} a sample is under the local distribution compared to the base distribution.
+\end{newmethod}
+
+\subsection{Derivation in Log Space}
+
+Expanding both Gaussians in log space (the $-\frac{D}{2}\log(2\pi)$ terms cancel):
+
+\textbf{Log local density} (per dimension $d$):
+\begin{equation}
+    \log p_{\text{local}}^{(d)}(\bar{u}_d) = -\frac{1}{2}\log\sigma_{c,d}^2 - \frac{(\bar{u}_d - \mu_{c,d})^2}{2\sigma_{c,d}^2}
+\end{equation}
+
+\textbf{Log prior density} (per dimension $d$):
+\begin{equation}
+    \log p_{\text{prior}}^{(d)}(\bar{u}_d) = -\frac{1}{2}\bar{u}_d^2
+\end{equation}
+
+\textbf{Log density ratio} (per dimension $d$):
+\begin{equation}
+    \log r_d = \log p_{\text{local}}^{(d)} - \log p_{\text{prior}}^{(d)} = -\frac{1}{2}\log\sigma_{c,d}^2 - \frac{(\bar{u}_d - \mu_{c,d})^2}{2\sigma_{c,d}^2} + \frac{\bar{u}_d^2}{2}
+\end{equation}
+
+\textbf{Geometric mean} over dimensions for numerical stability:
+\begin{equation}
+    \boxed{w_i = \exp\!\left(\frac{1}{D}\sum_{d=1}^{D} \log r_d\right) = \exp\!\left(\frac{1}{D}\sum_{d=1}^{D}\left[\frac{\bar{u}_{i,d}^2}{2} - \frac{(\bar{u}_{i,d} - \mu_{c,d})^2}{2\sigma_{c,d}^2} - \frac{1}{2}\log\sigma_{c,d}^2\right]\right)}
+    \label{eq:density_ratio_full}
+\end{equation}
+
+The weight is clamped to $[\exp(-10), \exp(10)]$ for numerical stability.
+
+\begin{keypoint}
+When $w_i > 1$: the sample is more likely under local data than under the prior --- it is informative and should be used.\\
+When $w_i < 1$: the sample is less likely under local data --- it is uninformative or harmful and should be down-weighted.\\
+When $w_i \approx 1$: the local and prior overlap --- the sample carries no extra information.
+\end{keypoint}
+
+\subsection{Connection to Importance Sampling}
+
+This is an importance sampling correction (Sugiyama et al., 2012). When we sample $\bar{\uvec} \sim p_{\text{prior}}$ and evaluate a loss under the local distribution, the unbiased estimator requires:
+\begin{equation}
+    \E_{p_{\text{local}}}[f(\bar{\uvec})] = \E_{p_{\text{prior}}}\!\left[\frac{p_{\text{local}}(\bar{\uvec})}{p_{\text{prior}}(\bar{\uvec})} \cdot f(\bar{\uvec})\right]
+\end{equation}
+Our density ratio weight $w_i$ is exactly this importance weight.
+
+\newpage
+% ======================================================================
+% SECTION 3: FEATURE 2 --- PERSONALIZED NF
+% ======================================================================
+\section{Feature 2: Personalized NF with KL Regularization}
+\label{sec:f2}
+
+\subsection{The Problem: One NF for Two Conflicting Roles}
+
+In the original paper, a \textbf{single global NF} (aggregated via FedAvg) serves two roles:
+\begin{enumerate}
+    \item \textbf{Generator}: Produces replay features for all clients.
+    \item \textbf{Credibility estimator}: Computes per-class Gaussians in latent space (Eq.~\ref{eq:gaussian_fit}).
+\end{enumerate}
+
+\begin{problem}[Role conflict]
+The global NF models the \textbf{average} of all clients' feature distributions. But credibility estimation (Eq.~\ref{eq:credibility}) needs the NF to accurately model the \textbf{local} client's features. The global average dilutes local structure --- the per-class Gaussians become broader and less discriminative.
+\end{problem}
+
+\subsection{The Fix: Personalized NF with KL Regularization}
+
+\begin{newmethod}
+Each client $k$ trains a \textbf{personal NF} $g_k$ that is regularized to stay close to the server's global NF $g_{\text{server}}$:
+\begin{equation}
+    \boxed{\loss_{\text{NF}}^{k} = \underbrace{\loss_{\text{NF}}(g_k; \data_k^t, G_z)}_{\text{standard NF loss (Eq.~5)}} + \underbrace{\lambda_{\text{KL}} \cdot D_{\text{KL}}(g_k \| g_{\text{server}})}_{\text{stay close to global}}}
+    \label{eq:personalized_nf}
+\end{equation}
+\end{newmethod}
+
+\subsection{Exact KL Between Normalizing Flows}
+
+For normalizing flows, the KL divergence is \textbf{exactly computable} (not an approximation). Using the definition:
+\begin{equation}
+    D_{\text{KL}}(g_k \| g_{\text{server}}) = \E_{\zvec \sim p_{g_k}}\!\left[\log p_{g_k}(\zvec \mid y) - \log p_{g_{\text{server}}}(\zvec \mid y)\right]
+\end{equation}
+
+Both $\log p_{g_k}$ and $\log p_{g_{\text{server}}}$ are exactly computable via Eq.~\eqref{eq:nf_logprob}. In practice, we estimate the expectation using the local data batch:
+\begin{equation}
+    \boxed{D_{\text{KL}}(g_k \| g_{\text{server}}) \approx \frac{1}{n}\sum_{i=1}^{n}\left[\log p_{g_k}\!\left(\ha(\xvec_i), y_i\right) - \log p_{g_{\text{server}}}\!\left(\ha(\xvec_i), y_i\right)\right]}
+    \label{eq:exact_kl}
+\end{equation}
+
+\begin{keypoint}
+This is \textbf{not} a variational bound or approximation. It is the exact KL divergence estimated via Monte Carlo on the local data. This is possible only because normalizing flows have tractable densities.
+\end{keypoint}
+
+\subsection{How the Two NFs Are Used}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Task} & \textbf{Original} & \textbf{Improved} \\
+\midrule
+Replay generation   & Global NF $g_{\text{server}}$ & Global NF $g_{\text{server}}$ (unchanged) \\
+Credibility (Eq.~8) & Global NF $g_{\text{server}}$ & \textbf{Personal} NF $g_k$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The global NF still handles generation (it needs to represent all clients). The personal NF handles credibility estimation (it needs to represent the local data accurately).
+
+\newpage
+% ======================================================================
+% SECTION 4: FEATURE 3 --- EMA FEATURE EXTRACTOR
+% ======================================================================
+\section{Feature 3: EMA Feature Extractor}
+\label{sec:f3}
+
+\subsection{The Problem: The Moving Target}
+
+The NF is trained to model $p(\ha(\xvec), y)$ --- but $\ha$ is being updated simultaneously. This creates a fundamental instability:
+
+\begin{problem}[Moving target]
+At training step $\tau$, the NF is trained to model $p(\ha^{(\tau)}(\xvec), y)$. But at step $\tau+1$, the classifier updates to $\ha^{(\tau+1)}$, and the NF's learned distribution is now stale. The NF is always chasing a moving target.
+\end{problem}
+
+The KD loss (Eq.~\ref{eq:kd}) partially constrains $\ha$ but creates a deadlock:
+\begin{itemize}
+    \item Strong KD ($k_{\text{KD}}$ large): $\ha$ cannot adapt $\Rightarrow$ poor performance on new task.
+    \item Weak KD ($k_{\text{KD}}$ small): $\ha$ drifts freely $\Rightarrow$ NF becomes invalid.
+\end{itemize}
+
+\subsection{The Fix: Exponential Moving Average}
+
+\begin{newmethod}
+Maintain an EMA (Exponential Moving Average) copy of the feature extractor:
+\begin{equation}
+    \boxed{\ha^{\text{EMA}}(\tau) = \alpha \cdot \ha^{\text{EMA}}(\tau - 1) + (1 - \alpha) \cdot \ha(\tau)}
+    \label{eq:ema_update}
+\end{equation}
+where $\alpha \in [0.99, 0.999]$ is the decay rate.
+
+Train the NF on features from $\ha^{\text{EMA}}$ instead of $\ha$:
+\begin{equation}
+    \loss_{\text{NF}}^{\text{EMA}} = -\frac{1}{n}\sum_{i=1}^{n} \log p_{\zvec}\!\left(\ha^{\text{EMA}}(\xvec_i), y_i\right)
+    \label{eq:nf_ema}
+\end{equation}
+\end{newmethod}
+
+\subsection{Why EMA Works: Temporal Smoothing}
+
+The EMA of a sequence of parameters $\{\ha^{(\tau)}\}_{\tau=1}^{T}$ satisfies:
+\begin{equation}
+    \ha^{\text{EMA}}(\tau) = (1-\alpha)\sum_{s=0}^{\tau-1}\alpha^s \cdot \ha^{(\tau - s)}
+\end{equation}
+
+This is a weighted average of all past iterates, with exponentially decaying weights. The key property:
+
+\begin{proposition}[Variance reduction]
+If $\ha^{(\tau)} = \ha^* + \epsilon_\tau$ where $\epsilon_\tau$ is zero-mean noise with variance $\sigma^2$, then:
+\begin{equation}
+    \text{Var}[\ha^{\text{EMA}}(\tau)] = \frac{1-\alpha}{1+\alpha} \cdot \sigma^2 \ll \sigma^2
+\end{equation}
+For $\alpha = 0.999$: $\text{Var}[\ha^{\text{EMA}}] \approx 0.0005 \cdot \sigma^2$ --- a 2000x reduction.
+\end{proposition}
+
+\begin{intuition}
+The EMA model is like a ``slow teacher'' (cf. Mean Teacher, Tarvainen \& Valpola 2017). The live classifier $\ha$ is free to adapt quickly to the new task. The EMA $\ha^{\text{EMA}}$ changes slowly and smoothly, giving the NF a stable target to learn. This decouples classifier adaptation speed from NF stability --- solving the deadlock.
+\end{intuition}
+
+\subsection{Modified KD with EMA}
+
+The feature KD (Eq.~\ref{eq:kd}) can also optionally use the EMA:
+\begin{equation}
+    \loss_{\text{KD}}^{\text{EMA}} = \frac{1}{n}\sum_{i=1}^{n} \left\|\ha(\xvec_i) - \ha^{\text{EMA}}(\xvec_i)\right\|^2
+\end{equation}
+This replaces the frozen old extractor $\haold$ with the smooth EMA, providing a continuously adapting reference.
+
+\newpage
+% ======================================================================
+% SECTION 5: FEATURE 4 --- FISHER AGGREGATION
+% ======================================================================
+\section{Feature 4: Fisher Information Weighted Aggregation}
+\label{sec:f4}
+
+\subsection{The Problem: FedAvg Destroys NF Semantics}
+
+\begin{oldmethod}
+\textbf{Standard FedAvg (Eq.~\ref{eq:fedavg}):}
+\begin{equation}
+    \thetavec_{\text{server}}^{\text{NF}} = \sum_{k=1}^{K}\frac{n_k}{\sum_j n_j} \thetavec_k^{\text{NF}}
+    \label{eq:fedavg_nf}
+\end{equation}
+\end{oldmethod}
+
+\begin{problem}[Averaging bijections is not a bijection]
+Two NFs $g_1$ and $g_2$ trained on different data may learn \textbf{different parameterizations} of similar distributions. Averaging their parameters does not produce a valid NF that models the union of both distributions. Consider: NF $g_1$ might route class-A features through a particular affine coupling path, while $g_2$ routes them through a different path. Their average produces a garbled transformation.
+\end{problem}
+
+\subsection{The Fix: Fisher Information Weighted Aggregation}
+
+\begin{newmethod}
+Weight each parameter dimension by how much the local data constrains it, using the diagonal Fisher Information Matrix:
+\begin{equation}
+    \boxed{\thetavec_{\text{server}} = \left(\sum_{k=1}^{K} \mathbf{F}_k\right)^{-1} \sum_{k=1}^{K} \mathbf{F}_k \thetavec_k}
+    \label{eq:fisher_avg}
+\end{equation}
+where $\mathbf{F}_k$ is the diagonal Fisher Information Matrix for client $k$.
+\end{newmethod}
+
+\subsection{The Fisher Information Matrix}
+
+\begin{definition}[Diagonal Fisher Information]
+For NF parameter $\theta^{(j)}$:
+\begin{equation}
+    F_k^{(j)} = \frac{1}{n_k}\sum_{i=1}^{n_k}\left(\frac{\partial \log p_{g_k}(\ha(\xvec_i), y_i)}{\partial \theta^{(j)}}\right)^2
+    \label{eq:fisher_def}
+\end{equation}
+\end{definition}
+
+\begin{intuition}
+The Fisher information measures how ``sensitive'' the NF's log-probability is to each parameter:
+\begin{itemize}
+    \item Large $F_k^{(j)}$: Parameter $\theta^{(j)}$ is tightly constrained by client $k$'s data. Changing it significantly impacts the log-likelihood. This client's value should dominate.
+    \item Small $F_k^{(j)}$: Parameter $\theta^{(j)}$ barely affects the log-likelihood for client $k$. Let other clients determine its value.
+\end{itemize}
+\end{intuition}
+
+\subsection{Bayesian Justification}
+
+The Fisher-weighted average is the MAP estimate under a product-of-Gaussians model. If each client provides a ``posterior'' for the NF parameters:
+\begin{equation}
+    p(\thetavec \mid \data_k) \approx \N(\thetavec_k, \mathbf{F}_k^{-1})
+\end{equation}
+then the product of all client posteriors gives:
+\begin{equation}
+    p(\thetavec \mid \data_1, \ldots, \data_K) \propto \prod_{k=1}^{K} \N(\thetavec; \thetavec_k, \mathbf{F}_k^{-1})
+\end{equation}
+The mode of this product distribution is exactly Eq.~\eqref{eq:fisher_avg}. This is the \textbf{correct Bayesian aggregation formula} under Laplace approximation.
+
+\subsection{Why It Matters for NF Specifically}
+
+For NFs, $\log p_{g_k}(\zvec, y)$ is \textbf{exactly computable} (Eq.~\ref{eq:nf_logprob}), so the Fisher is available from the backward pass at no extra architectural cost. For classifiers, the Fisher is approximate (based on cross-entropy loss). The NF's Fisher is exact --- a unique advantage.
+
+\begin{keypoint}
+Classifier parameters are still aggregated with standard FedAvg (they are robust to averaging). Only NF parameters use Fisher-weighted aggregation.
+\end{keypoint}
+
+\subsection{Efficient Batch Approximation}
+
+Computing the exact per-sample Fisher (Eq.~\ref{eq:fisher_def}) requires $n_k$ backward passes. The efficient batch approximation uses the batch gradient:
+\begin{equation}
+    \tilde{F}_k^{(j)} \approx \frac{1}{B}\sum_{b=1}^{B}\left(\frac{\partial \loss_b}{\partial \theta^{(j)}}\right)^2, \qquad \loss_b = -\frac{1}{|\text{batch}_b|}\sum_{i \in \text{batch}_b} \log p_{g_k}(\zvec_i, y_i)
+\end{equation}
+This runs $B$ times faster (one backward pass per batch, not per sample).
+
+\newpage
+% ======================================================================
+% SECTION 6: FEATURE 5 --- ADAPTIVE THETA
+% ======================================================================
+\section{Feature 5: Adaptive Explore-Theta}
+\label{sec:f5}
+
+\subsection{The Problem: Fixed Theta}
+
+\begin{oldmethod}
+\textbf{Explore-forget weight (Eq.~\ref{eq:explore_weight}):}
+\begin{equation}
+    k_{\text{explore}} = (1 - \theta) \cdot \bar{p} + \theta
+\end{equation}
+where $\theta$ is a \textbf{fixed hyperparameter}, hand-tuned per dataset:
+\begin{center}
+\begin{tabular}{lc}
+\toprule
+Dataset & $\theta$ \\
+\midrule
+EMNIST-Letters (unrelated tasks) & 0.0 \\
+EMNIST-Shuffle (similar tasks) & 0.5 \\
+CIFAR100 & 0.1 \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{oldmethod}
+
+\begin{problem}[Static heuristic]
+The optimal $\theta$ depends on \textbf{how similar the current task is to past tasks}. This varies across tasks (early tasks may be similar, later ones may differ) and across clients (different clients see different class subsets). A single fixed $\theta$ cannot adapt to this.
+\end{problem}
+
+\subsection{The Fix: Data-Driven Theta}
+
+\begin{newmethod}
+Compute $\theta$ dynamically using the cross-task NF log-likelihood:
+\begin{equation}
+    \boxed{\theta^*_t = \sigma\!\left(\beta \cdot \frac{1}{n \cdot D}\sum_{i=1}^{n} \log p_{g'}\!\left(\ha(\xvec_i), y_i\right)\right)}
+    \label{eq:adaptive_theta}
+\end{equation}
+where $g'$ is the old task's NF, $\sigma(\cdot)$ is the sigmoid function, and $\beta$ is a scaling parameter.
+\end{newmethod}
+
+\subsection{Derivation and Intuition}
+
+\textbf{Step 1: Measure task similarity.} The quantity:
+\begin{equation}
+    S = \frac{1}{n}\sum_{i=1}^{n} \log p_{g'}\!\left(\ha(\xvec_i), y_i\right)
+\end{equation}
+is the average log-likelihood of the current task's features under the old flow $g'$. This is a proper information-theoretic measure:
+\begin{itemize}
+    \item $S$ is high (close to 0) $\Rightarrow$ current features are well-modeled by old flow $\Rightarrow$ \textbf{tasks are similar}.
+    \item $S$ is very negative $\Rightarrow$ current features are unlikely under old flow $\Rightarrow$ \textbf{tasks are different}.
+\end{itemize}
+
+\textbf{Step 2: Normalize.} We divide by $D$ (feature dimension) to get a per-dimension score, making $S/D$ scale-invariant:
+\begin{equation}
+    \bar{S} = \frac{1}{n \cdot D}\sum_{i=1}^{n} \log p_{g'}(\ha(\xvec_i), y_i)
+\end{equation}
+
+\textbf{Step 3: Map to $[0,1]$.} The sigmoid bounds the output:
+\begin{equation}
+    \theta^* = \sigma(\beta \cdot \bar{S}) = \frac{1}{1 + e^{-\beta \bar{S}}}
+\end{equation}
+
+\begin{keypoint}
+When tasks are similar: $\bar{S}$ is high $\Rightarrow$ $\theta^* \to 1$ $\Rightarrow$ $k_{\text{explore}} \approx 1$ $\Rightarrow$ \textbf{preserve all old knowledge}.\\[0.3em]
+When tasks are different: $\bar{S}$ is very negative $\Rightarrow$ $\theta^* \to 0$ $\Rightarrow$ $k_{\text{explore}} \approx \bar{p}$ $\Rightarrow$ \textbf{selectively preserve based on credibility only}.
+\end{keypoint}
+
+This replaces a hand-tuned per-dataset constant with a per-round, per-client, data-driven quantity computed at no extra cost (it uses the same NF forward pass already computed during training).
+
+\newpage
+% ======================================================================
+% SECTION 7: FEATURE 6 --- SINKHORN DIVERGENCE
+% ======================================================================
+\section{Feature 6: Sinkhorn Divergence Feature Distillation}
+\label{sec:f6}
+
+\subsection{The Problem: Pointwise MSE is Too Rigid}
+
+\begin{oldmethod}
+\textbf{Feature KD (Eq.~\ref{eq:kd}):}
+\begin{equation}
+    \loss_{\text{KD}} = \frac{1}{n}\sum_{i=1}^{n} \left\|\ha(\xvec_i) - \haold(\xvec_i)\right\|^2
+\end{equation}
+This forces each individual feature vector to stay close to its old position.
+\end{oldmethod}
+
+\begin{problem}[Pointwise matching is too restrictive]
+In continual learning, the model needs to reorganize its feature representation for new tasks. The NF cares about the \textbf{distribution} of features, not the position of each individual feature. MSE prevents any reorganization, even reorganization that preserves the distribution's shape.
+
+Example: If all 512-dimensional feature vectors rotate by a small angle (preserving their distribution), MSE incurs a large penalty. But the NF would be equally happy with the rotated distribution.
+\end{problem}
+
+\subsection{The Fix: Sinkhorn Divergence}
+
+\begin{newmethod}
+Replace MSE with the Sinkhorn divergence, a differentiable approximation to the Wasserstein distance:
+\begin{equation}
+    \boxed{\loss_{\text{KD}}^W = S_\varepsilon\!\left(\{h_a(\xvec_i)\}_{i=1}^n, \;\{h_a'(\xvec_i)\}_{i=1}^n\right)}
+    \label{eq:sinkhorn_kd}
+\end{equation}
+where $S_\varepsilon$ is the Sinkhorn divergence.
+\end{newmethod}
+
+\subsection{Optimal Transport Background}
+
+\begin{definition}[Wasserstein Distance]
+The 2-Wasserstein distance between two distributions $P$ and $Q$ on $\R^D$ is:
+\begin{equation}
+    W_2(P, Q) = \inf_{\gamma \in \Pi(P, Q)} \left(\int \|\xvec - \mathbf{y}\|^2 \, d\gamma(\xvec, \mathbf{y})\right)^{1/2}
+\end{equation}
+where $\Pi(P, Q)$ is the set of all joint distributions (``transport plans'') with marginals $P$ and $Q$.
+\end{definition}
+
+\begin{intuition}
+Think of $P$ and $Q$ as piles of dirt. The Wasserstein distance is the minimum ``work'' (mass $\times$ distance) needed to reshape pile $P$ into pile $Q$. Unlike MSE, it finds the optimal assignment between points rather than forcing each point to stay in place.
+\end{intuition}
+
+Computing $W_2$ exactly is $O(n^3)$. Instead, we use the entropy-regularized version:
+
+\begin{definition}[Entropic Optimal Transport]
+\begin{equation}
+    W_\varepsilon(P, Q) = \inf_{\gamma \in \Pi(P, Q)} \left\{\int \|\xvec - \mathbf{y}\|^2 \, d\gamma + \varepsilon \cdot \text{KL}(\gamma \| P \otimes Q)\right\}
+\end{equation}
+The KL term makes the problem strictly convex and solvable via the Sinkhorn algorithm in $O(n^2)$.
+\end{definition}
+
+\subsection{The Sinkhorn Algorithm}
+
+Given point clouds $X = \{\xvec_i\}_{i=1}^N$ and $Y = \{\mathbf{y}_j\}_{j=1}^M$:
+
+\textbf{Step 1:} Compute cost matrix $C_{ij} = \|\xvec_i - \mathbf{y}_j\|^2$ and normalize: $\bar{C} = C / \max(C)$.
+
+\textbf{Step 2:} Initialize dual variables $\mathbf{f} = \mathbf{0} \in \R^N$, $\mathbf{g} = \mathbf{0} \in \R^M$.
+
+\textbf{Step 3:} Iterate (log-domain stabilized):
+\begin{align}
+    f_i &\leftarrow -\varepsilon \cdot \text{logsumexp}_j\!\left(\frac{-\bar{C}_{ij} + g_j}{\varepsilon}\right) \\
+    g_j &\leftarrow -\varepsilon \cdot \text{logsumexp}_i\!\left(\frac{-\bar{C}_{ij} + f_i}{\varepsilon}\right)
+\end{align}
+
+\textbf{Step 4:} The transport plan is $P_{ij} \propto \exp\!\left(\frac{-\bar{C}_{ij} + f_i + g_j}{\varepsilon}\right)$.
+
+\textbf{Step 5:} The cost is $W_\varepsilon = \sum_{ij} P_{ij} \cdot \bar{C}_{ij}$.
+
+\subsection{Unbiased Sinkhorn Divergence}
+
+The entropy regularization introduces a bias ($W_\varepsilon > 0$ even when $P = Q$). The Sinkhorn \textbf{divergence} corrects this:
+\begin{equation}
+    \boxed{S_\varepsilon(P, Q) = W_\varepsilon(P, Q) - \frac{1}{2}W_\varepsilon(P, P) - \frac{1}{2}W_\varepsilon(Q, Q)}
+    \label{eq:sinkhorn_div}
+\end{equation}
+This satisfies $S_\varepsilon(P, P) = 0$ (unbiased) and $S_\varepsilon(P, Q) \geq 0$ (non-negative). It metrizes weak convergence, meaning $S_\varepsilon(P_n, Q) \to 0$ if and only if $P_n$ converges weakly to $Q$.
+
+\begin{keypoint}
+\textbf{MSE} = every feature must stay in place (pointwise constraint).\\
+\textbf{Sinkhorn} = the feature distribution must stay the same shape (distributional constraint).\\[0.3em]
+Sinkhorn allows individual features to move (adapt to new task) as long as the overall distribution is preserved (NF remains valid).
+\end{keypoint}
+
+\newpage
+% ======================================================================
+% SECTION 8: SUMMARY
+% ======================================================================
+\section{Summary of All Improvements}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.4}
+\begin{tabular}{@{}p{0.5cm}p{3.5cm}p{4.5cm}p{5cm}@{}}
+\toprule
+\textbf{\#} & \textbf{Feature} & \textbf{Original (Problem)} & \textbf{Improved (Solution)} \\
+\midrule
+F1 & Density Ratio & Absolute density $p_{\data}(\bar{\uvec})$ biased by base distribution & Ratio $p_{\data}/p_{\text{prior}}$ corrects for sampling bias \\
+F2 & Personalized NF & One global NF for generation + credibility & Personal NF for credibility, global for generation \\
+F3 & EMA Extractor & NF trains on moving target $\ha^{(\tau)}$ & NF trains on stable $\ha^{\text{EMA}}$ \\
+F4 & Fisher Aggregation & FedAvg destroys NF parameter semantics & Fisher-weighted average preserves constrained dims \\
+F5 & Adaptive Theta & Fixed $\theta$ hand-tuned per dataset & Data-driven $\theta^* = \sigma(\beta \bar{S})$ \\
+F6 & Sinkhorn KD & Pointwise MSE prevents feature reorganization & Distributional Sinkhorn allows reorganization \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{How Features Interact}
+
+The features target \textbf{different components} of the AF-FCL pipeline and can be combined freely:
+
+\begin{itemize}
+    \item \textbf{F1 + F5} (Credibility): Both modify how generated features are weighted. F1 fixes the weight computation; F5 fixes the explore-forget trade-off. They are complementary.
+    \item \textbf{F2 + F4} (NF training/aggregation): F2 personalizes local NF training; F4 improves how personalized NFs are aggregated. They form a natural pair.
+    \item \textbf{F3 + F6} (Feature stability): F3 stabilizes the NF target; F6 relaxes the feature constraint. Both reduce the tension between classifier adaptation and NF stability.
+\end{itemize}
+
+\newpage
+\section{Compilation Instructions}
+
+To compile this document to PDF:
+\begin{verbatim}
+    cd theory/
+    pdflatex main.tex
+    pdflatex main.tex    # run twice for table of contents
+\end{verbatim}
+
+If \texttt{pdflatex} is not installed:
+\begin{verbatim}
+    # Ubuntu/Debian
+    sudo apt-get install texlive-latex-recommended texlive-latex-extra
+
+    # macOS (via Homebrew)
+    brew install --cask mactex-no-gui
+\end{verbatim}
+
+\end{document}
