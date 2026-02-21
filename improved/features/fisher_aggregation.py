@@ -125,6 +125,10 @@ def compute_diagonal_fisher_efficient(model, dataloader, device, num_classes,
         x = x.to(device)
         y = y.to(device)
 
+        # Skip degenerate batches (fewer than 2 samples)
+        if x.shape[0] < 2:
+            continue
+
         with torch.no_grad():
             xa = model.classifier.forward_to_xa(x)
             xa = xa.reshape(xa.shape[0], -1)
@@ -145,7 +149,12 @@ def compute_diagonal_fisher_efficient(model, dataloader, device, num_classes,
     if n_batches > 0:
         for name in fisher_diag:
             fisher_diag[name] /= n_batches
+    else:
+        # No usable batches — Fisher is uninformative, use uniform weights
+        import glog as logger
+        logger.warning('Fisher estimation got 0 usable batches; using uniform weights')
 
+    # Add small constant for numerical stability (prevents division by zero)
     for name in fisher_diag:
         fisher_diag[name] += 1e-8
 

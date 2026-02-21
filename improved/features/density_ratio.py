@@ -49,7 +49,8 @@ def sample_from_flow_with_noise(flow, labels, batch_size, num_classes):
     label = np.random.choice(labels, batch_size)
     class_onehot = np.zeros((batch_size, num_classes))
     class_onehot[np.arange(batch_size), label] = 1
-    class_onehot = torch.Tensor(class_onehot).cuda()
+    device = next(flow.parameters()).device
+    class_onehot = torch.Tensor(class_onehot).to(device)
 
     # Sample noise from the base distribution N(0, I)
     noise = flow._distribution.sample(batch_size)

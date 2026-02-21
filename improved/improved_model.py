@@ -157,7 +157,7 @@ class ImprovedPreciseModel(PreciseModel):
         support Feature 5 (adaptive theta needs the old flow).
         """
 
-        if self.algorithm == 'PreciseFCL' and type(flow) != type(None) and self.k_loss_flow > 0:
+        if self.algorithm == 'PreciseFCL' and flow is not None and self.k_loss_flow > 0:
             batch_size = x.shape[0]
 
             with torch.no_grad():
@@ -184,14 +184,14 @@ class ImprovedPreciseModel(PreciseModel):
                         xa_u, y, prob_mean, flow_xa, label)
 
                 flow_xa_prob = flow_xa_prob.detach()
-                flow_xa_prob_mean = flow_xa_prob.mean()
+                flow_xa_prob_mean = flow_xa_prob.mean().item()
 
             flow_xa = flow_xa.reshape(flow_xa.shape[0], *self.xa_shape)
             softmax_output_flow, _ = self.classifier.forward_from_xa(flow_xa)
             c_loss_flow_generate = (
                 self.classify_criterion_noreduce(
                     torch.log(softmax_output_flow + eps),
-                    torch.Tensor(label).long().cuda()
+                    torch.Tensor(label).long().to(x.device)
                 ) * flow_xa_prob
             ).mean()
 
@@ -241,7 +241,7 @@ class ImprovedPreciseModel(PreciseModel):
                 kd_loss_feature_last = compute_kd_loss_ema(
                     xa, self.ema_extractor, x, self.k_kd_last_cls)
                 # Output KD still uses original method
-                if self.k_kd_last_cls > 0 and type(last_classifier) != type(None):
+                if self.k_kd_last_cls > 0 and last_classifier is not None:
                     softmax_output_last, _, _ = last_classifier(x)
                     softmax_output_last = softmax_output_last.detach()
                     kd_loss_output_last = self.k_kd_last_cls * MultiClassCrossEntropy(
@@ -303,7 +303,7 @@ class ImprovedPreciseModel(PreciseModel):
         and original MultiClassCrossEntropy for output loss.
         """
         # Last classifier KD
-        if self.k_kd_last_cls > 0 and type(last_classifier) != type(None):
+        if self.k_kd_last_cls > 0 and last_classifier is not None:
             softmax_output_last, xa_last, _ = last_classifier(x)
             xa_last = xa_last.detach()
             softmax_output_last = softmax_output_last.detach()

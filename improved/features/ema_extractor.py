@@ -121,7 +121,7 @@ def train_flow_with_ema(model, ema_extractor, x, y, last_flow,
     loss_data = -model.flow.log_prob(inputs=xa_ema, context=y_one_hot).mean()
 
     # Replay from previous flow
-    if model.algorithm == 'PreciseFCL' and type(last_flow) != type(None):
+    if model.algorithm == 'PreciseFCL' and last_flow is not None:
         batch_size = x.shape[0]
         with torch.no_grad():
             flow_xa, label, label_one_hot = model.sample_from_flow(

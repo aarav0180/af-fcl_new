@@ -134,7 +134,7 @@ class FedPrecise(Server):
             # 2. user side:
             # ============ train ==============
 
-            epoch_per_task = int(self.num_glob_iters / N_TASKS)
+            epoch_per_task = max(1, int(self.num_glob_iters / N_TASKS))
 
             for glob_iter_task in range( epoch_per_task):
                 
@@ -223,7 +223,7 @@ class FedPrecise(Server):
                     class_available = torch.Tensor(user.classes_so_far).long()
                     param_dict[name][class_available] += param.data[class_available] * user.train_samples / total_train
                     
-                    add_weight = torch.zeros([param.data.shape[0]]).cuda()
+                    add_weight = torch.zeros([param.data.shape[0]], device=param.data.device)
                     add_weight[class_available] = user.train_samples / total_train
                 else:
                     param_dict[name] += param.data * user.train_samples / total_train

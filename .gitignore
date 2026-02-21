@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.manifest
+*.spec
+
+# Virtual environments
+venv/
+env/
+.venv/
+.env/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter
+.ipynb_checkpoints/
+
+# PyTorch / ML artifacts
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# Datasets
+datasets/
+
+# Output / Logs
+output_dir/
+logs/
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Distribution
+*.tar.gz
+*.zip

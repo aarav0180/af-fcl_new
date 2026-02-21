@@ -4,5 +4,5 @@ Pillow
 matplotlib
 tqdm
 h5py
-sklearn
+scikit-learn
 seaborn

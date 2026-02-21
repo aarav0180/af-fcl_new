@@ -176,7 +176,8 @@ class PreciseModel(nn.Module):
         label = np.random.choice(labels, batch_size)
         class_onehot = np.zeros((batch_size, self.num_classes))
         class_onehot[np.arange(batch_size), label] = 1
-        class_onehot = torch.Tensor(class_onehot).cuda()
+        device = next(flow.parameters()).device
+        class_onehot = torch.Tensor(class_onehot).to(device)
         flow_xa = flow.sample(num_samples=1, context=class_onehot).squeeze(1)
         flow_xa = flow_xa.detach()
         return flow_xa, label, class_onehot
@@ -200,7 +201,7 @@ class PreciseModel(nn.Module):
         
     def train_a_batch_classifier(self, x, y, flow, last_classifier, global_classifier, classes_past_task, available_labels):
         
-        if self.algorithm=='PreciseFCL' and type(flow)!=type(None) and self.k_loss_flow>0:
+        if self.algorithm=='PreciseFCL' and flow is not None and self.k_loss_flow>0:
             batch_size = x.shape[0]
 
             with torch.no_grad():
@@ -216,12 +217,12 @@ class PreciseModel(nn.Module):
                 flow_xa, label, _ = self.sample_from_flow(flow, available_labels, batch_size)
                 flow_xa_prob = self.probability_in_localdata(xa_u, y, prob_mean, flow_xa, label)
                 flow_xa_prob = flow_xa_prob.detach()
-                flow_xa_prob_mean = flow_xa_prob.mean()
+                flow_xa_prob_mean = flow_xa_prob.mean().item()
 
             flow_xa = flow_xa.reshape(flow_xa.shape[0], *self.xa_shape)
             softmax_output_flow, _ = self.classifier.forward_from_xa(flow_xa)
-            c_loss_flow_generate = (self.classify_criterion_noreduce(torch.log(softmax_output_flow+eps), torch.Tensor(label).long().cuda())*flow_xa_prob).mean()
-            # c_loss_flow_generate = self.classify_criterion(torch.log(softmax_output_flow+eps), torch.Tensor(label).long().cuda())
+            c_loss_flow_generate = (self.classify_criterion_noreduce(torch.log(softmax_output_flow+eps), torch.Tensor(label).long().to(x.device))*flow_xa_prob).mean()
+            # c_loss_flow_generate = self.classify_criterion(torch.log(softmax_output_flow+eps), torch.Tensor(label).long().to(x.device))
             k_loss_flow_explore_forget = (1-self.flow_explore_theta)*prob_mean+self.flow_explore_theta
 
             kd_loss_output_last_flow, kd_loss_output_global_flow = self.knowledge_distillation_on_output(flow_xa, softmax_output_flow, last_classifier, global_classifier)
@@ -272,7 +273,7 @@ class PreciseModel(nn.Module):
                  'c_loss_flow': c_loss_flow, 'kd_loss_flow': kd_loss_flow, 'kd_loss_feature': kd_loss_feature, 'kd_loss_output': kd_loss_output}
 
     def knowledge_distillation_on_output(self, xa, softmax_output, last_classifier, global_classifier):
-        if self.k_kd_last_cls>0 and type(last_classifier)!=type(None):
+        if self.k_kd_last_cls>0 and last_classifier is not None:
             softmax_output_last, _ = last_classifier.forward_from_xa(xa)
             softmax_output_last = softmax_output_last.detach()
             kd_loss_output_last = self.k_kd_last_cls*MultiClassCrossEntropy(softmax_output, softmax_output_last, T=2)
@@ -289,7 +290,7 @@ class PreciseModel(nn.Module):
         return kd_loss_output_last, kd_loss_output_global
     
     def knowledge_distillation_on_xa_output(self, x, xa, softmax_output, last_classifier, global_classifier):
-        if self.k_kd_last_cls>0 and type(last_classifier)!=type(None):
+        if self.k_kd_last_cls>0 and last_classifier is not None:
             softmax_output_last, xa_last, _ = last_classifier(x)
             xa_last = xa_last.detach()
             softmax_output_last = softmax_output_last.detach()
@@ -317,7 +318,7 @@ class PreciseModel(nn.Module):
         y_one_hot = F.one_hot(y, num_classes=self.num_classes).float()
         loss_data = -self.flow.log_prob(inputs=xa, context=y_one_hot).mean()
 
-        if self.algorithm=='PreciseFCL' and type(last_flow)!=type(None):
+        if self.algorithm=='PreciseFCL' and last_flow is not None:
             batch_size = x.shape[0]
             with torch.no_grad():
                 flow_xa, label, label_one_hot = self.sample_from_flow(last_flow, available_labels_past, batch_size)

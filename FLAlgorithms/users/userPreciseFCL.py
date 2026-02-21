@@ -37,7 +37,8 @@ class UserPreciseFCL(User):
         
         # update last model:
         self.last_copy  = copy.deepcopy(self.model)
-        self.last_copy.cuda()
+        device = next(self.model.parameters()).device
+        self.last_copy.to(device)
         self.if_last_copy = True
         
         # update dataset: 
@@ -99,7 +100,7 @@ class UserPreciseFCL(User):
 
             last_classifier = None
             last_flow = None
-            if type(self.last_copy)!=type(None):
+            if self.last_copy is not None:
                 last_classifier = self.last_copy.classifier
                 last_classifier.eval()
                 if self.algorithm=='PreciseFCL':
@@ -189,9 +190,8 @@ class UserPreciseFCL(User):
     def test_all_(self, personal=False, matrix=False):
         model = self.model.classifier
 
-        model.cuda()
-        
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        device = next(model.parameters()).device
+        model.to(device)
         
         model.eval()
         

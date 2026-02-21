@@ -161,7 +161,7 @@ class ImprovedFedPrecise(FedPrecise):
                     self.users[-1].available_labels_current))
 
             # ============ train ==============
-            epoch_per_task = int(self.num_glob_iters / N_TASKS)
+            epoch_per_task = max(1, int(self.num_glob_iters / N_TASKS))
 
             for glob_iter_task in range(epoch_per_task):
                 glob_iter = glob_iter_task + (epoch_per_task) * task

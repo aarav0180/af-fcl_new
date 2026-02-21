@@ -66,19 +66,19 @@ def get_dataset(args, dataset_name, datadir, data_split_file):
         if dataset_name=='EMNIST-Letters-shuffle':
             assert 'EMNIST_letters_shuffle' in data_split_file        
 
-        data_train = datasets.EMNIST(datadir, 'letters', download=False, train=True, transform=transforms.ToTensor(), target_transform=lambda x:x-1)
-        data_test = datasets.EMNIST(datadir, 'letters', download=False, train=False, transform=transforms.ToTensor(), target_transform=lambda x:x-1)
+        data_train = datasets.EMNIST(datadir, 'letters', download=True, train=True, transform=transforms.ToTensor(), target_transform=lambda x:x-1)
+        data_test = datasets.EMNIST(datadir, 'letters', download=True, train=False, transform=transforms.ToTensor(), target_transform=lambda x:x-1)
 
     elif dataset_name=='CIFAR100':
         unique_labels = 100
 
-        data_train = datasets.CIFAR100(datadir, download=False, train=True)
-        data_test = datasets.CIFAR100(datadir, download=False, train=False)
+        data_train = datasets.CIFAR100(datadir, download=True, train=True)
+        data_test = datasets.CIFAR100(datadir, download=True, train=False)
 
     elif args.dataset=='MNIST-SVHN-FASHION':
         unique_labels = 20
 
-        download = False
+        download = True
         repeat_transform = transforms.Lambda(lambda x: x.repeat(3, 1, 1))
         mean=(0.1,)
         std=(0.2752,)

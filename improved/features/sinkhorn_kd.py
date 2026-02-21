@@ -35,42 +35,6 @@ stability in high dimensions.
 import torch
 
 
-def _log_sinkhorn_iterations(log_a, log_b, M, reg, max_iter):
-    """
-    Stabilized log-domain Sinkhorn iterations.
-    
-    Solves the entropic OT problem:
-        min_P <P, M> + reg * KL(P || a ⊗ b)
-    
-    Args:
-        log_a: Log of source marginal [N]
-        log_b: Log of target marginal [M]
-        M:     Cost matrix [N, M_]
-        reg:   Regularization strength (epsilon)
-        max_iter: Number of Sinkhorn iterations
-        
-    Returns:
-        log_P: Log of transport plan [N, M_]
-    """
-    # Initialize dual variables
-    f = torch.zeros_like(log_a)  # [N]
-    g = torch.zeros_like(log_b)  # [M_]
-
-    for _ in range(max_iter):
-        # f update: f_i = - reg * logsumexp_j( (-M_ij + g_j) / reg ) + f_i
-        f = -reg * torch.logsumexp((-M + g.unsqueeze(0)) / reg, dim=1) + f
-        # Incorporate marginal constraint
-        f = f + log_a * reg
-
-        # g update
-        g = -reg * torch.logsumexp((-M + f.unsqueeze(1)) / reg, dim=0) + g
-        g = g + log_b * reg
-
-    # Transport plan in log domain
-    log_P = (-M + f.unsqueeze(1) + g.unsqueeze(0)) / reg
-    return log_P
-
-
 def _sinkhorn_cost(X, Y, reg=0.1, max_iter=30):
     """
     Compute the Sinkhorn (entropic OT) cost between two point clouds.
@@ -141,6 +105,12 @@ def sinkhorn_divergence(X, Y, reg=0.1, max_iter=30):
     Returns:
         divergence: Scalar Sinkhorn divergence (differentiable w.r.t. X)
     """
+    # Guard: Sinkhorn needs at least 2 samples per cloud for meaningful OT.
+    # With 1 sample, logsumexp over a single element produces degenerate results.
+    if X.shape[0] < 2 or Y.shape[0] < 2:
+        # Fallback to MSE when batch is too small for OT
+        return torch.pow(X - Y, 2).mean()
+
     W_xy = _sinkhorn_cost(X, Y, reg=reg, max_iter=max_iter)
     W_xx = _sinkhorn_cost(X, X, reg=reg, max_iter=max_iter)
 

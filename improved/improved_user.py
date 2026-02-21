@@ -90,7 +90,7 @@ class ImprovedUserPreciseFCL(UserPreciseFCL):
 
             last_classifier = None
             last_flow = None
-            if type(self.last_copy) != type(None):
+            if self.last_copy is not None:
                 last_classifier = self.last_copy.classifier
                 last_classifier.eval()
                 if self.algorithm == 'PreciseFCL':
@@ -147,9 +147,11 @@ class ImprovedUserPreciseFCL(UserPreciseFCL):
             result_dict['flow_loss'] = 0
         if 'flow_loss_last' not in result_dict.keys():
             result_dict['flow_loss_last'] = 0
+        if 'flow_loss_kl' not in result_dict.keys():
+            result_dict['flow_loss_kl'] = 0
 
         if verbose:
-            logger.info((
+            log_msg = (
                 "Training for user {:d}; Acc: {:.2f} %%; c_loss: {:.4f}; "
                 "kd_loss: {:.4f}; flow_prob_mean: {:.4f}; "
                 "flow_loss: {:.4f}; flow_loss_last: {:.4f}; "
@@ -160,7 +162,11 @@ class ImprovedUserPreciseFCL(UserPreciseFCL):
                 result_dict['flow_prob_mean'],
                 result_dict['flow_loss'], result_dict['flow_loss_last'],
                 result_dict['c_loss_flow'], result_dict['kd_loss_flow'],
-                result_dict['kd_loss_feature'], result_dict['kd_loss_output']))
+                result_dict['kd_loss_feature'], result_dict['kd_loss_output'])
+            if result_dict['flow_loss_kl'] != 0:
+                log_msg += "; flow_loss_kl: {:.4f}".format(
+                    result_dict['flow_loss_kl'])
+            logger.info(log_msg)
 
         return {
             'acc': acc, 'c_loss': result_dict['c_loss'],
@@ -170,4 +176,5 @@ class ImprovedUserPreciseFCL(UserPreciseFCL):
             'flow_loss_last': result_dict['flow_loss_last'],
             'c_loss_flow': result_dict['c_loss_flow'],
             'kd_loss_flow': result_dict['kd_loss_flow'],
+            'flow_loss_kl': result_dict['flow_loss_kl'],
         }
